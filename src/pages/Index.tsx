@@ -572,11 +572,326 @@ function QuestsSection({ quests, setQuests, coins, setCoins }: {
   );
 }
 
+// ─── Village Section ──────────────────────────────────────────────────────────
+
+type HouseLevel = 0 | 1 | 2 | 3 | 4;
+
+const HOUSE_STAGES: { label: string; emoji: string; color: string; desc: string; repairCost: number }[] = [
+  { label: "Руины",        emoji: "🏚️", color: "#5a3a1a", desc: "Полуразрушенные стены, нет крыши",      repairCost: 200  },
+  { label: "Лачуга",       emoji: "🛖",  color: "#7a5a2a", desc: "Починены стены, дыры в крыше",           repairCost: 400  },
+  { label: "Хижина",       emoji: "🏠",  color: "#8a6a3a", desc: "Жилой дом, нужна покраска",              repairCost: 600  },
+  { label: "Добротный дом",emoji: "🏡",  color: "#6a8a40", desc: "Крепкий дом с садом",                    repairCost: 900  },
+  { label: "Усадьба",      emoji: "🏰",  color: "#5a9a50", desc: "Шикарная усадьба! Ремонт завершён",      repairCost: 0    },
+];
+
+interface BerryBush {
+  id: number;
+  type: "strawberry" | "blueberry" | "raspberry";
+  ready: boolean;
+  lastPick: number;
+}
+
+interface TreeObj {
+  id: number;
+  type: "oak" | "pine" | "birch" | "apple";
+  hasFruit: boolean;
+  lastPick: number;
+}
+
+const BERRY_INFO = {
+  strawberry: { name: "Клубника",  emoji: "🍓", value: 25, readyIn: 20 },
+  blueberry:  { name: "Черника",   emoji: "🫐", value: 30, readyIn: 30 },
+  raspberry:  { name: "Малина",    emoji: "🍇", value: 20, readyIn: 15 },
+};
+
+const TREE_INFO = {
+  oak:    { name: "Дуб",    emoji: "🌳", fruitEmoji: null,  fruitName: null,   value: 0  },
+  pine:   { name: "Сосна",  emoji: "🌲", fruitEmoji: null,  fruitName: null,   value: 0  },
+  birch:  { name: "Берёза", emoji: "🌳", fruitEmoji: null,  fruitName: null,   value: 0  },
+  apple:  { name: "Яблоня", emoji: "🌳", fruitEmoji: "🍎",  fruitName: "Яблоко", value: 35 },
+};
+
+const GRASS_PATCHES = ["🌿","🌿","🍀","🌾","🌿","🌱","🍀","🌿","🌾","🌱","🌿","🍀"];
+
+function VillageSection({ coins, setCoins, setInventory }: {
+  coins: number; setCoins: (c: number) => void;
+  setInventory: React.Dispatch<React.SetStateAction<InventoryItem[]>>;
+}) {
+  const [houseLevel, setHouseLevel] = useState<HouseLevel>(0);
+  const [repairing, setRepairing] = useState(false);
+  const [notif, setNotif] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  const [bushes, setBushes] = useState<BerryBush[]>([
+    { id: 1, type: "strawberry", ready: true,  lastPick: Date.now() - 25000 },
+    { id: 2, type: "blueberry",  ready: false, lastPick: Date.now() - 5000  },
+    { id: 3, type: "raspberry",  ready: true,  lastPick: Date.now() - 20000 },
+    { id: 4, type: "strawberry", ready: false, lastPick: Date.now() - 8000  },
+    { id: 5, type: "blueberry",  ready: false, lastPick: Date.now() - 10000 },
+  ]);
+
+  const [trees, setTrees] = useState<TreeObj[]>([
+    { id: 1, type: "oak",   hasFruit: false, lastPick: Date.now() },
+    { id: 2, type: "pine",  hasFruit: false, lastPick: Date.now() },
+    { id: 3, type: "apple", hasFruit: true,  lastPick: Date.now() - 40000 },
+    { id: 4, type: "birch", hasFruit: false, lastPick: Date.now() },
+    { id: 5, type: "apple", hasFruit: false, lastPick: Date.now() - 10000 },
+    { id: 6, type: "oak",   hasFruit: false, lastPick: Date.now() },
+  ]);
+
+  // Tick for ripening
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setTick(t => t + 1);
+      setBushes(prev => prev.map(b => {
+        if (b.ready) return b;
+        const since = (Date.now() - b.lastPick) / 1000;
+        return since >= BERRY_INFO[b.type].readyIn ? { ...b, ready: true } : b;
+      }));
+      setTrees(prev => prev.map(t => {
+        if (t.type !== "apple" || t.hasFruit) return t;
+        const since = (Date.now() - t.lastPick) / 1000;
+        return since >= 40 ? { ...t, hasFruit: true } : t;
+      }));
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const flash = (msg: string) => { setNotif(msg); setTimeout(() => setNotif(null), 2000); };
+
+  const repair = () => {
+    if (houseLevel >= 4) return;
+    const stage = HOUSE_STAGES[houseLevel];
+    if (coins < stage.repairCost) { flash("❌ Недостаточно монет!"); return; }
+    setRepairing(true);
+    setCoins(coins - stage.repairCost);
+    setTimeout(() => {
+      setHouseLevel(prev => (prev + 1) as HouseLevel);
+      setRepairing(false);
+      flash(`🎉 Дом улучшен! Теперь: ${HOUSE_STAGES[houseLevel + 1].label}`);
+    }, 1200);
+  };
+
+  const pickBerry = (bush: BerryBush) => {
+    if (!bush.ready) {
+      const since = (Date.now() - bush.lastPick) / 1000;
+      const left = Math.ceil(BERRY_INFO[bush.type].readyIn - since);
+      flash(`⏳ Ещё не поспело! (${left}с)`);
+      return;
+    }
+    const info = BERRY_INFO[bush.type];
+    setInventory(prev => {
+      const ex = prev.find(i => i.id === bush.type);
+      if (ex) return prev.map(i => i.id === bush.type ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, { id: bush.type, name: info.name, emoji: info.emoji, qty: 1, sellPrice: info.value }];
+    });
+    setBushes(prev => prev.map(b => b.id === bush.id ? { ...b, ready: false, lastPick: Date.now() } : b));
+    flash(`${info.emoji} Собрано: ${info.name}!`);
+  };
+
+  const pickApple = (tree: TreeObj) => {
+    if (!tree.hasFruit) { flash("🍎 Яблоки ещё не созрели!"); return; }
+    setInventory(prev => {
+      const ex = prev.find(i => i.id === "apple");
+      if (ex) return prev.map(i => i.id === "apple" ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, { id: "apple", name: "Яблоко", emoji: "🍎", qty: 1, sellPrice: 35 }];
+    });
+    setTrees(prev => prev.map(t => t.id === tree.id ? { ...t, hasFruit: false, lastPick: Date.now() } : t));
+    flash("🍎 Яблоко сорвано!");
+  };
+
+  const currentStage = HOUSE_STAGES[houseLevel];
+  const nextStage = houseLevel < 4 ? HOUSE_STAGES[houseLevel + 1] : null;
+  const repairProgress = houseLevel / 4 * 100;
+
+  return (
+    <div className="space-y-4">
+      <Notification text={notif} />
+
+      {/* Village scene */}
+      <div className="pixel-border bg-[#0d2008] p-0 overflow-hidden relative" style={{ minHeight: 220 }}>
+        {/* Sky strip */}
+        <div className="h-12 bg-gradient-to-b from-[#1a3a3a] to-[#1a3a18] relative overflow-hidden">
+          {/* Clouds */}
+          <div className="absolute top-2 left-[10%] text-2xl opacity-60" style={{ animation: "cloud-drift 18s linear infinite" }}>☁️</div>
+          <div className="absolute top-3 left-[50%] text-xl opacity-40" style={{ animation: "cloud-drift 25s linear infinite 8s" }}>☁️</div>
+          <div className="absolute top-1 left-[80%] text-lg opacity-50" style={{ animation: "cloud-drift 20s linear infinite 3s" }}>☁️</div>
+          {/* Sun/Moon based on tick parity */}
+          <div className="absolute top-2 right-6 text-2xl">🌤️</div>
+        </div>
+
+        {/* Ground scene */}
+        <div className="relative bg-[#1a3a10] px-4 pb-4 pt-2">
+          {/* Grass patches */}
+          <div className="flex flex-wrap gap-1 mb-3 opacity-60">
+            {GRASS_PATCHES.map((g, i) => (
+              <span key={i} className="text-base" style={{ animationDelay: `${i * 0.3}s`, animation: "sway 3s ease-in-out infinite" }}>{g}</span>
+            ))}
+          </div>
+
+          {/* Main scene row */}
+          <div className="flex items-end gap-4 flex-wrap">
+            {/* House */}
+            <div
+              className="relative cursor-pointer group"
+              onClick={repair}
+              title={houseLevel < 4 ? `Починить — 💰${currentStage.repairCost}` : "Дом отремонтирован!"}
+            >
+              <div className={`text-7xl transition-all duration-500 ${repairing ? "animate-shake" : "group-hover:scale-110"}`}
+                style={{ filter: houseLevel < 2 ? "grayscale(0.7) sepia(0.3)" : houseLevel < 4 ? "none" : "drop-shadow(0 0 8px #FFD70088)" }}>
+                {currentStage.emoji}
+              </div>
+              {/* Repair badge */}
+              {houseLevel < 4 && !repairing && (
+                <div className="absolute -top-2 -right-2 bg-[#FFD700] text-[#1a0a00] text-[6px] font-['Press_Start_2P'] px-1 py-0.5 border border-[#a07800] animate-pulse">
+                  💰{currentStage.repairCost}
+                </div>
+              )}
+              {repairing && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-2xl animate-spin">⚙️</span>
+                </div>
+              )}
+              {houseLevel >= 4 && (
+                <div className="absolute -top-2 -right-2 text-lg">⭐</div>
+              )}
+            </div>
+
+            {/* Trees */}
+            {trees.map(tree => {
+              const info = TREE_INFO[tree.type];
+              return (
+                <div key={tree.id}
+                  className={`relative text-4xl cursor-pointer transition-transform hover:scale-110 ${tree.type === "apple" ? "hover:brightness-110" : ""}`}
+                  onClick={() => tree.type === "apple" ? pickApple(tree) : undefined}
+                  style={{ animation: `sway ${2.5 + tree.id * 0.4}s ease-in-out infinite` }}
+                  title={tree.type === "apple" ? (tree.hasFruit ? "🍎 Сорвать яблоко!" : "🍎 Яблоки ещё растут...") : info.name}
+                >
+                  {info.emoji}
+                  {tree.type === "apple" && tree.hasFruit && (
+                    <span className="absolute -bottom-1 right-0 text-sm animate-float">🍎</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Berry bushes row */}
+          <div className="flex gap-3 mt-3 flex-wrap">
+            {bushes.map(bush => {
+              const info = BERRY_INFO[bush.type];
+              return (
+                <div key={bush.id}
+                  className={`relative cursor-pointer transition-transform hover:scale-110 flex flex-col items-center`}
+                  onClick={() => pickBerry(bush)}
+                  title={bush.ready ? `${info.emoji} Собрать ${info.name}!` : "Ещё не поспело..."}
+                >
+                  <div className={`text-2xl transition-all ${bush.ready ? "" : "grayscale opacity-60"}`}>🌿</div>
+                  {bush.ready && (
+                    <div className="absolute -top-1 text-base animate-float">{info.emoji}</div>
+                  )}
+                  {!bush.ready && (
+                    <div className="absolute -top-1 text-xs opacity-40">🌱</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* House status card */}
+      <div className="pixel-border bg-[#0d1a0a] p-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
+            <span className="text-5xl">{currentStage.emoji}</span>
+            <div className="space-y-1">
+              <div className="text-[10px] text-[#c8f0a0] font-['Press_Start_2P']">{currentStage.label}</div>
+              <div className="text-[7px] text-[#8aaa80]">{currentStage.desc}</div>
+              <div className="flex items-center gap-2 mt-2">
+                <div className="text-[6px] text-[#6a8a62] uppercase">Состояние</div>
+                <div className="w-32">
+                  <ProgressBar value={houseLevel} max={4} color={houseLevel >= 4 ? "#FFD700" : "#6abf58"} />
+                </div>
+                <div className="text-[7px] text-[#FFD700]">{houseLevel}/4</div>
+              </div>
+            </div>
+          </div>
+          {houseLevel < 4 ? (
+            <div className="space-y-2 text-right">
+              <div className="text-[7px] text-[#8aaa80]">
+                Следующий уровень: <span className="text-[#c8f0a0]">{HOUSE_STAGES[houseLevel + 1]?.label}</span>
+              </div>
+              <button
+                onClick={repair}
+                disabled={repairing || coins < currentStage.repairCost}
+                className={`pixel-btn ${coins >= currentStage.repairCost && !repairing ? "pixel-btn-gold" : "pixel-btn-brown opacity-50"}`}
+              >
+                {repairing ? "⚙️ Ремонт..." : `🔨 Починить — 💰${currentStage.repairCost}`}
+              </button>
+            </div>
+          ) : (
+            <div className="text-center space-y-1">
+              <div className="text-3xl">⭐</div>
+              <div className="text-[7px] text-[#FFD700]">Идеальное состояние!</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Repair stages road */}
+      <div className="pixel-border bg-[#0d1a0a] p-4">
+        <div className="text-[#6abf58] text-[8px] mb-3 uppercase tracking-widest">Этапы ремонта</div>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {HOUSE_STAGES.map((stage, i) => (
+            <div key={i} className={`flex-shrink-0 text-center p-3 border-2 min-w-[90px] ${
+              i < houseLevel ? "border-[#6abf58] bg-[#0a1a08]" :
+              i === houseLevel ? "border-[#FFD700] bg-[#1a1000]" :
+              "border-[#2a3a22] bg-[#0a0e08] opacity-60"
+            }`}>
+              <div className={`text-2xl mb-1 ${i < houseLevel ? "" : i === houseLevel ? "animate-float" : "grayscale"}`}>{stage.emoji}</div>
+              <div className="text-[6px] text-[#c8f0a0]">{stage.label}</div>
+              {i < 4 && <div className="text-[5px] text-[#FFD700] mt-1">💰{stage.repairCost}</div>}
+              {i < houseLevel && <div className="text-[#6abf58] text-xs mt-1">✓</div>}
+              {i === houseLevel && houseLevel < 4 && <div className="text-[#FFD700] text-[5px] mt-1">← текущий</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Bushes & gather info */}
+      <div className="pixel-border bg-[#0d1a0a] p-4">
+        <div className="text-[#6abf58] text-[8px] mb-3 uppercase tracking-widest">Ягодные кусты</div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {bushes.map(bush => {
+            const info = BERRY_INFO[bush.type];
+            const since = (Date.now() - bush.lastPick) / 1000;
+            const progress = bush.ready ? 100 : Math.min(100, (since / info.readyIn) * 100);
+            return (
+              <div key={bush.id}
+                className={`pixel-border-brown bg-[#0a1208] p-3 text-center space-y-1 cursor-pointer transition-transform hover:scale-105 ${bush.ready ? "border-[#6abf58]" : ""}`}
+                onClick={() => pickBerry(bush)}
+              >
+                <div className={`text-2xl ${bush.ready ? "animate-float" : "opacity-50"}`}>{bush.ready ? info.emoji : "🌿"}</div>
+                <div className="text-[6px] text-[#c8f0a0]">{info.name}</div>
+                <ProgressBar value={progress} max={100} color={bush.ready ? "#6abf58" : "#4a6a40"} />
+                <div className="text-[5px] text-[#FFD700]">💰{info.value}/шт</div>
+                {bush.ready && <div className="text-[5px] text-[#6abf58]">Готово!</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-type Tab = "field" | "animals" | "shop" | "build" | "inventory" | "quests";
+type Tab = "field" | "animals" | "shop" | "build" | "inventory" | "quests" | "village";
 
 const TABS: { id: Tab; label: string; emoji: string }[] = [
+  { id: "village",   label: "Деревня", emoji: "🏡" },
   { id: "field",     label: "Поле",    emoji: "🌾" },
   { id: "animals",   label: "Загон",   emoji: "🐄" },
   { id: "shop",      label: "Магазин", emoji: "🏪" },
@@ -586,7 +901,7 @@ const TABS: { id: Tab; label: string; emoji: string }[] = [
 ];
 
 export default function Index() {
-  const [activeTab, setActiveTab] = useState<Tab>("field");
+  const [activeTab, setActiveTab] = useState<Tab>("village");
   const [coins, setCoins] = useState(500);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [quests, setQuests] = useState<Quest[]>(INITIAL_QUESTS);
@@ -643,6 +958,7 @@ export default function Index() {
 
       {/* Content */}
       <main className="max-w-5xl mx-auto px-4 py-6">
+        {activeTab === "village" && <VillageSection coins={coins} setCoins={setCoins} setInventory={setInventory} />}
         {activeTab === "field" && <FieldSection coins={coins} setCoins={setCoins} quests={quests} setQuests={setQuests} setInventory={setInventory} />}
         {activeTab === "animals" && <AnimalSection coins={coins} setCoins={setCoins} quests={quests} setQuests={setQuests} setInventory={setInventory} />}
         {activeTab === "shop" && <ShopSection coins={coins} setCoins={setCoins} inventory={inventory} setInventory={setInventory} quests={quests} setQuests={setQuests} />}
